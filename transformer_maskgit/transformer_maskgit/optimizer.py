@@ -7,6 +7,7 @@ def separate_weight_decayable_params(params):
         param_list.append(param)
     return wd_params, no_wd_params
 
+# 优化器参数设置
 def get_optimizer(
     params,
     lr = 1e-4,

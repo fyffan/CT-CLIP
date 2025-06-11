@@ -115,17 +115,18 @@ def pick_video_frame(video, frame_indices):
     images = rearrange(images, 'b 1 c ... -> b c ...')
     return images
 
+# 直接修改？
 class CTViT(nn.Module):
     def __init__(
         self,
         *,
-        dim,
-        codebook_size,
+        dim,   # 特征维度，每个token的向量长度
+        codebook_size, 
         image_size,
         patch_size,
-        temporal_patch_size,
-        spatial_depth,
-        temporal_depth,
+        temporal_patch_size,  # 时间patch的大小（多少帧合成一个patch）
+        spatial_depth,  # 空间Transformer的深度
+        temporal_depth,  # 时间Transformer的深度
         discr_base_dim = 16,
         dim_head = 64,
         heads = 8,
@@ -153,9 +154,16 @@ class CTViT(nn.Module):
         self.patch_size = pair(patch_size)
         patch_height, patch_width = self.patch_size
 
-        self.temporal_patch_size = temporal_patch_size
+        self.temporal_patch_size = temporal_patch_size  # 每个patch包含多少帧（第三轴）
 
         self.spatial_rel_pos_bias = ContinuousPositionBias(dim = dim, heads = heads)
+        # 空间相对位置编码，返回偏置tensor
+        # 这个偏置会在注意力计算中被加到注意力分数上，帮助模型理解patch之间的相对位置关系
+        '''
+        ContinuousPositionBias 是一个可学习的相对位置编码模块，通常实现为一个小的MLP或查找表。
+        它根据 patch 之间的相对坐标（如横纵距离）输出一个偏置值，直接加到注意力分数上。
+        这样，模型在计算注意力时会自动考虑空间结构。
+        '''
 
         image_height, image_width = self.image_size
         assert (image_height % patch_height) == 0 and (image_width % patch_width) == 0
@@ -166,6 +174,8 @@ class CTViT(nn.Module):
             nn.Linear(channels * patch_width * patch_height, dim),
             nn.LayerNorm(dim)
         )
+        # 将第一帧图像转换为patch embeddings
+        # Rearrange 将输入张量的形状从 (b, c, 1, h, w) 转换为 (b, 1, h, w, c * p1 * p2)
 
         self.to_patch_emb = nn.Sequential(
             Rearrange('b c (t pt) (h p1) (w p2) -> b t h w (c pt p1 p2)', p1 = patch_height, p2 = patch_width, pt = temporal_patch_size),
@@ -173,6 +183,7 @@ class CTViT(nn.Module):
             nn.Linear(channels * patch_width * patch_height * temporal_patch_size, dim),
             nn.LayerNorm(dim)
         )
+        # 3D切成patch
 
         transformer_kwargs = dict(
             dim = dim,
@@ -186,18 +197,30 @@ class CTViT(nn.Module):
         self.enc_spatial_transformer = Transformer(depth = spatial_depth, **transformer_kwargs)
         self.enc_temporal_transformer = Transformer(depth = temporal_depth, **transformer_kwargs)
         self.vq = VectorQuantize(dim = dim, codebook_size = codebook_size, use_cosine_sim = True)
+        # 把连续特征变成有限的“离散token”
+        '''
+        3. 工作原理
+        准备一个codebook：里面有N个可学习的原型向量（每个向量维度为dim）。
+        输入一个特征向量：比如经过Transformer编码后的patch特征。
+        查找最近的codebook向量：计算输入向量与所有codebook向量的距离（如余弦距离或欧氏距离）。
+        找到距离最近的那个，把输入向量替换成它。
+        输出：离散化后的向量（即codebook中的向量），以及它的索引（token id）。
+        '''
 
         self.to_pixels_first_frame = nn.Sequential(
             nn.Linear(dim, channels * patch_width * patch_height),
             Rearrange('b 1 h w (c p1 p2) -> b c 1 (h p1) (w p2)', p1 = patch_height, p2 = patch_width)
         )
-
+        # 像素还原模块
         self.to_pixels = nn.Sequential(
             nn.Linear(dim, channels * patch_width * patch_height * temporal_patch_size),
             Rearrange('b t h w (c pt p1 p2) -> b c (t pt) (h p1) (w p2)', p1 = patch_height, p2 = patch_width, pt = temporal_patch_size),
         )
         
         self.gen_loss = hinge_gen_loss if use_hinge_loss else bce_gen_loss
+        # 生成器损失函数，使用hinge loss或bce loss
+        # hinge loss 是一种常用的生成对抗网络损失函数，旨在最大化生成样本的分数，同时最小化真实样本的分数
+        
 
     def calculate_video_token_mask(self, videos, video_frame_mask):
         *_, h, w = videos.shape
@@ -279,18 +302,23 @@ class CTViT(nn.Module):
     def patch_height_width(self):
         return self.image_size[0] // self.patch_size[0], self.image_size[1] // self.patch_size[1]
 
+    # 主要功能是 patch特征的空间-时间双重Transformer编码，输出每个patch融合时空上下文的高级特征
     def encode(
         self,
         tokens
     ):
         b = tokens.shape[0]
-        h, w = self.patch_height_width
+        h, w = self.patch_height_width  # 一共几个patch，如何切分的
 
         video_shape = tuple(tokens.shape[:-1])
+        # tokens除了最后一个维度外的形状，通常是(batch, time, height, width)
 
         tokens = rearrange(tokens, 'b t h w d -> (b t) (h w) d')
         device=torch.device('cuda')
         attn_bias = self.spatial_rel_pos_bias(h, w, device = device)
+        # ：为空间Transformer的注意力机制生成空间相对位置偏置（Spatial Relative Position Bias）张量。
+        # size为[heads, h*w, h*w]，【注意力头数，patch的总数】
+        # 表示当前head下，第i个patch与第j个patch之间的相对位置关系。[head,i,j]
 
         tokens = self.enc_spatial_transformer(tokens, attn_bias = attn_bias, video_shape = video_shape)
 
@@ -364,6 +392,7 @@ class CTViT(nn.Module):
         assert video.ndim in {4, 5}
 
         is_image = video.ndim == 4
+        # 如果是图像，维度为4，否则为5（视频）
         #print(video.shape)
 
         if is_image:
@@ -389,18 +418,27 @@ class CTViT(nn.Module):
         *_, h, w, _ = shape
 
         # encode - spatial
-
         tokens = self.encode(tokens)
+        # 是在对patch特征进行空间和时间上的Transformer编码，提取更高级的时空特征。
+        # 也就是直接进过CTVIT-ENCODER部分，然后直接量化输出
+        # 这里的tokens是经过空间Transformer编码后的特征，
+        # 形状为(batch, time, height, width, dim)
 
         # quantize
-
         tokens, packed_fhw_shape = pack([tokens], 'b * d')
+        # 的作用是将多维patch特征展平成二维张量，方便后续量化（vector quantization）操作，
+        # 并记录原始形状信息以便还原。
 
         vq_mask = None
         if exists(mask):
             vq_mask = self.calculate_video_token_mask(video, mask)
 
         tokens, indices, commit_loss = self.vq(tokens, mask = vq_mask)
+        # 量化操作将连续的patch特征转换为离散的codebook向量，
+        # 并返回对应的codebook索引（indices）和重构损失（commit_loss）。
+        # 量化后的tokens形状为(batch, time, height, width, dim)，
+        # indices形状为(batch, time, height * width)，
+        # commit_loss是一个标量，表示量化损失。
 
         if return_only_codebook_ids:
             indices, = unpack(indices, packed_fhw_shape, 'b *')

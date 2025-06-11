@@ -27,6 +27,7 @@ image_encoder = CTViT(
     heads = 8
 )
 #dim_image = 131072,
+# 什么东西
 
 
 clip = CTCLIP(

@@ -165,15 +165,26 @@ class CTClipTrainer(nn.Module):
     ):
         super().__init__()
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        # 这是一个用于分布式数据并行训练的配置类，
+        # 它允许在多GPU环境中训练模型，并且可以处理未使用的参数。
         kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=36000))
+        # 这是一个用于初始化进程组的配置类，
+        # 它设置了进程组的超时时间为10小时（36000秒），
+        # 以确保在分布式训练中各个进程能够正常通信。
         self.accelerator = Accelerator(kwargs_handlers=[ddp_kwargs, kwargs], **accelerate_kwargs)
+        # 这是一个用于加速训练的类，
+        # 它结合了分布式数据并行和进程组初始化的配置，以便在多GPU环境中高效地训练模型。
         self.CTClip = CTClip
         if tokenizer != None:
             self.tokenizer=tokenizer
         else:
             self.tokenizer=BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized',do_lower_case=True)
+            # 这行代码的作用是初始化一个医学领域专用的BERT分词器，
+            # 用于将原始文本转为模型可处理的token序列：
 
         self.register_buffer('steps', torch.Tensor([0]))
+        # 这行代码的作用是注册一个名为'steps'的缓冲区，该缓冲区是一个张量，初始值为0。
+        # 这个缓冲区用于跟踪训练的步数，并且在模型保存和加载时会被保留。
 
         self.num_train_steps = num_train_steps
         self.batch_size = batch_size
@@ -183,12 +194,13 @@ class CTClipTrainer(nn.Module):
         self.optim = get_optimizer(all_parameters, lr=lr, wd=wd)
 
         self.max_grad_norm = max_grad_norm
+        # max_grad_norm是一个超参数，用于梯度裁剪，以防止梯度爆炸。
         self.lr=lr
         # Load the pre-trained weights
         self.ds = CTReportDataset(data_folder=data_train, csv_file=reports_file_train)
-
+        # 训练CT报告数据集
         self.valid_ds = CTReportDatasetinfer(data_folder=data_valid, csv_file=reports_file_valid, labels = labels)
-
+        # CT报告测试数据集
 
         self.dl = DataLoader(
             self.ds,
@@ -206,6 +218,15 @@ class CTClipTrainer(nn.Module):
 
         # prepare with accelerator
         self.dl_iter=cycle(self.dl)
+        # 这行代码的作用是创建一个无限循环的迭代器，
+        # 该迭代器会不断从数据加载器self.dl中获取数据，
+        # 以便在训练过程中可以不断获取批次数据进行训练。
+
+        # 为什么不用iter(self.dl)而是cycle(self.dl)？
+        # 因为iter(self.dl)只会创建一个迭代器，
+        # 当迭代器耗尽时会抛出StopIteration异常，而cycle(self.dl)会创建一个无限循环的迭代器，
+        # 即使数据加载器耗尽也不会抛出异常，而是会重新开始迭代。
+
         self.valid_dl_iter=cycle(self.valid_dl)
         self.device = self.accelerator.device
         self.CTClip.to(self.device)
@@ -221,6 +242,8 @@ class CTClipTrainer(nn.Module):
             self.CTClip,
             self.optim,
         )
+        # 这行代码的作用是使用Accelerator类的prepare方法将数据加载器、模型和优化器准备好，
+        # 以便在分布式训练中进行高效的训练和验证。
 
         self.save_model_every = save_model_every
         self.save_results_every = save_results_every
@@ -229,6 +252,7 @@ class CTClipTrainer(nn.Module):
 
         if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
             rmtree(str(self.results_folder))
+            # 这行代码的作用是删除指定路径下的所有文件和子目录，以清除之前的实验检查点和结果。
 
         self.results_folder.mkdir(parents=True, exist_ok=True)
 
@@ -267,7 +291,7 @@ class CTClipTrainer(nn.Module):
 
         steps = int(self.steps.item())
 
-        self.CTClip.train()
+        self.CTClip.train()  # set model to training mode
 
         # logs
         logs = {}
@@ -281,10 +305,13 @@ class CTClipTrainer(nn.Module):
         #text = text.to(device)
         text = list(text)
         text_tokens=self.tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512).to(device)
+        # 这行代码的作用是将文本数据转换为模型可处理的token序列，
 
         #video = video
         with self.accelerator.autocast():
-            loss = self.CTClip(text_tokens, video, return_loss=True, device=device)
+            loss = self.CTClip(text_tokens, video, return_loss=True, device=device)  # forward pass
+            # 计算损失值
+            # 为什么不求均值？
 
         self.accelerator.backward(loss)
         accum_log(logs, {'loss': loss.item()})
@@ -296,7 +323,7 @@ class CTClipTrainer(nn.Module):
         self.print(f"{steps}: loss: {logs['loss']}")
 
 
-
+        # save results every so often
         if self.is_main and not (steps % self.save_results_every):
             with torch.no_grad():
 
@@ -385,3 +412,4 @@ class CTClipTrainer(nn.Module):
             log_fn(logs)
 
         self.print('training complete')
+

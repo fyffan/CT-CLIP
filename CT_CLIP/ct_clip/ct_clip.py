@@ -522,6 +522,7 @@ class CTCLIP(nn.Module):
             )
 
         # image ssl
+        # 自监督损失部分
 
         self.use_visual_ssl = use_visual_ssl or exists(visual_ssl)
         self.image_ssl_loss_weight = image_ssl_loss_weight if use_visual_ssl else 0
@@ -545,11 +546,11 @@ class CTCLIP(nn.Module):
                 )
 
         # text latent projection
-
+        # 文本特征投影
         self.to_text_latent = nn.Linear(dim_text, dim_latent, bias = False)
 
         # image latent projection
-
+        # 图像特征投影
         if downsample_image_embeds:
             #assert use_all_token_embeds, 'must be using all token embeds for contrastive learning in order to downsampling'
             dim_conv=512
@@ -599,6 +600,7 @@ class CTCLIP(nn.Module):
     def tokenize(self, prompt):
         text_tokens=self.tokenizer(prompt, return_tensors="pt", padding="max_length", truncation=True, max_length=512).to(torch.cuda)
         return text_tokens
+    
     def token_embedding(self,input_ids):
         input_shape = input_ids.size()
         batch_size, seq_length = input_shape
@@ -712,7 +714,21 @@ class CTCLIP(nn.Module):
             freeze = freeze_image_encoder
         )"""
 
+
+        # 我希望在CTVIT模块后面加一点东西，是直接修改CTVIT？还是新建类，在此之后添加代码？
+        
+
+
+
+
+
+
+
+
         enc_image= self.visual_transformer(image, return_encoded_tokens=True)
+        # 这里调用的是 CTViT 的 forward 函数
+        # 返回的形状为['b t h w d']
+
 
         #print("This is visual encoding")
         global h_r, w_r, z_r
@@ -722,6 +738,7 @@ class CTCLIP(nn.Module):
         enc_image_send = enc_image
 
         enc_image = torch.mean(enc_image, dim=1)
+        # 对时序（time）维度做平均池化，slice维度
 
         #kernel_size = (enc_image.size(1), enc_image.size(2), enc_image.size(3))
 
@@ -735,7 +752,7 @@ class CTCLIP(nn.Module):
         #enc_image = enc_image[:,0,:]
         #print(enc_image.shape, flush=True)
         print("test all pooling")
-    
+
 
         enc_image = enc_image.view(enc_image.shape[0], -1)
 
@@ -749,11 +766,13 @@ class CTCLIP(nn.Module):
         # depending on whether to do fine-grained CLIP or not, select either all tokens, or CLS tokens only
 
         if self.use_all_token_embeds:
+            # 细粒度对比所有token patch 特征
             assert enc_text.ndim == 3, 'encoded text must have 3 dimensions (batch, seq, features)'
             assert enc_image.ndim == 3, 'encoded image must have 3 dimensions (batch, seq [height x width], features)'
             text_embeds = enc_text[:, 1:] if self.text_has_cls_token else enc_text
             image_embeds = enc_image[:, 1:] if self.visual_has_cls_token else enc_image
         else:
+            # 粗粒度对比：只用全局特征
             text_embeds = enc_text[:, :] if enc_text.ndim == 3 else enc_text
             image_embeds = enc_image[:, :] if enc_image.ndim == 3 else enc_image
 
@@ -766,13 +785,7 @@ class CTCLIP(nn.Module):
 
         image_latents = self.to_visual_latent(image_embeds)
 
-
-
         text_latents, image_latents = map(l2norm, (text_latents, image_latents))
-
-
-
-
 
         # calculate another set of latents for image to text (vs text to image)
         # proposed by CLOOB
@@ -797,7 +810,6 @@ class CTCLIP(nn.Module):
 
         # early return, if needed
 
-
         if not return_loss and self.use_all_token_embeds:
             einsum_args = (text_latents_extra, image_latents_extra) if self.extra_latent_projection and not text_to_image else (text_latents, image_latents)
             return einsum('b d, b i d -> b t i', *einsum_args) * temp
@@ -810,6 +822,8 @@ class CTCLIP(nn.Module):
 
         text_latents = rearrange(text_latents, '(m b) ... -> m b ...', m = num_batch_texts)
         image_latents = rearrange(image_latents, '(m b) ... -> m b ...', m = num_batch_images)
+        # 多视角（multiview）对比学习场景下，
+        # 将拼接在一起的特征重新分组，恢复出“视角数 × batch size × 特征”这样的结构
 
         if self.extra_latent_projection:
             text_latents_extra = rearrange(text_latents_extra, '(m b) ... -> m b ...', m = num_batch_texts)
@@ -844,6 +858,13 @@ class CTCLIP(nn.Module):
         else:
             text_to_image = einsum('m t d, n i d -> m n t i', text_latents, image_latents) * temp
             image_to_text = rearrange(text_to_image, '... t i -> ... i t')
+            # 文本和图像特征的相似度矩阵计算
+            # [m, t, d]，m为文本视角数，t为batch，d为特征维度
+            # [n, i, d]，n为图像视角数，i为batch，d为特征维度
+            # 对每个文本视角m、每个图像视角n、每个文本样本t、每个图像样本i，
+            # 计算它们的特征向量点积（即余弦相似度，因为已L2归一化）。
+            # 结果是一个形状为 [m, n, t, i] 的张量，表示每个文本视角和每个图像视角之间的相似度。
+            # 乘以温度参数，调节softmax的平滑程度。
 
             if self.extra_latent_projection:
                 image_to_text = einsum('m t d, n i d -> m n i t', text_latents_extra, image_latents_extra) * temp
@@ -852,13 +873,15 @@ class CTCLIP(nn.Module):
 
         text_to_image = rearrange(text_to_image, 'm n ... -> (m n) ...')
         image_to_text = rearrange(image_to_text, 'm n ... -> (m n) ...')
-
+        # 将多视角的文本和图像特征相似度矩阵展平为一维，方便后续计算损失
 
         # exponentiate
         text_to_image_exp, image_to_text_exp = map(torch.exp, (text_to_image, image_to_text))
+        # 计算文本和图像特征相似度矩阵的指数值
 
         # numerators
         text_to_image_pos, image_to_text_pos = map(matrix_diag, (text_to_image_exp, image_to_text_exp))
+        # 提取对角线元素作为正样本的分子
 
         # denominator
 
@@ -867,8 +890,11 @@ class CTCLIP(nn.Module):
             text_to_image_exp, image_to_text_exp = map(lambda t: t.masked_fill(pos_mask, 0.), (text_to_image_exp, image_to_text_exp))
 
         text_to_image_denom, image_to_text_denom = map(lambda t: t.sum(dim = -1), (text_to_image_exp, image_to_text_exp))
+        # 计算分母：对每个文本样本和图像样本，计算所有视角的相似度总和
+        # 后续加掩码即可
 
-        # loss
+        # loss计算
+        # 此处可修改
 
         text_to_image_loss = (-log(text_to_image_pos) + log(text_to_image_denom)).mean(dim = -1)
         image_to_text_loss = (-log(image_to_text_pos) + log(image_to_text_denom)).mean(dim = -1)

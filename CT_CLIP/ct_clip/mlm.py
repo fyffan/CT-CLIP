@@ -32,7 +32,7 @@ def get_mask_subset_with_prob(mask, prob):
     return new_mask[:, 1:].bool()
 
 # main class
-
+# 标准的掩码语言建模流程，能对输入序列随机掩码并计算预测损失，常用于BERT等模型的自监督训练。
 class MLM(nn.Module):
     def __init__(
         self,
@@ -95,10 +95,12 @@ class MLM(nn.Module):
 
         # get generator output and get mlm loss
         embedding = self.transformer(masked_seq, **kwargs)
+        # 输出是什么？
+        # embedding: [batch, seq_len, dim]
 
         # project to logits and remove CLS
-        logits = self.to_logits(embedding)
-        logits = logits[:, 1:]
+        logits = self.to_logits(embedding)  # [batch, seq_len, num_tokens]
+        logits = logits[:, 1:]  # remove CLS token logits
 
         mlm_loss = F.cross_entropy(
             logits.transpose(1, 2),
