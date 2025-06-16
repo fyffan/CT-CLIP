@@ -373,7 +373,7 @@ class CTClipTrainer(nn.Module):
                     predictedall=np.array(predictedall)
 
                     dfs=evaluate_internal(predictedall,realall,pathologies, plotdir)
-                    realall = np.rint(realall).astype(int)
+                    realall = np.rint(realall).astype(int)  
                     predictedall = np.rint(predictedall).astype(int)
 
 

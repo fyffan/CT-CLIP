@@ -896,6 +896,27 @@ class CTCLIP(nn.Module):
         # loss计算
         # 此处可修改
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
+
         text_to_image_loss = (-log(text_to_image_pos) + log(text_to_image_denom)).mean(dim = -1)
         image_to_text_loss = (-log(image_to_text_pos) + log(image_to_text_denom)).mean(dim = -1)
 
