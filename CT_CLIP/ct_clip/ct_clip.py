@@ -446,6 +446,14 @@ class CTCLIP(nn.Module):
             image_ssl_loss_weight = 0.05,
             multiview_loss_weight = 0.1,
             checkpoint_during_training = False,
+            # 新增参数
+            transformer_expert_dim = 512,
+            transformer_num_experts = 4,
+            transformer_token_num = 8,
+            transformer_encoder_depth = 4,
+            transformer_encoder_heads = 8,
+            transformer_decoder_depth = 4,
+            transformer_decoder_heads = 8,
             **kwargs
     ):
         super().__init__()
@@ -585,6 +593,42 @@ class CTCLIP(nn.Module):
 
         self.tokenizer= BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized',do_lower_case=True)
 
+        # ====== 新增模块初始化 ======
+        from transformer_maskgit.transformer_maskgit.ctvit import (
+            TransformerEncoder, MoE, TransformerDecoder, TaskSpecificExperts, DynamicRouting, Fusion
+        )
+
+        self.transformer_encoder = TransformerEncoder(
+            dim=transformer_expert_dim,
+            depth=transformer_encoder_depth,
+            heads=transformer_encoder_heads
+        )
+        self.moe = MoE(
+            dim=transformer_expert_dim,
+            num_experts=transformer_num_experts
+        )
+        self.transformer_decoder = TransformerDecoder(
+            dim=transformer_expert_dim,
+            token_num=transformer_token_num,
+            depth=transformer_decoder_depth,
+            heads=transformer_decoder_heads
+        )
+        self.task_experts = TaskSpecificExperts(
+            dim=transformer_expert_dim,
+            num_experts=transformer_num_experts
+        )
+        self.dynamic_routing = DynamicRouting(
+            dim=transformer_expert_dim,
+            num_experts=transformer_num_experts
+        )
+        self.fusion = Fusion(
+            dim=transformer_expert_dim,
+            num_experts=transformer_num_experts
+        )
+        # ====== 其余原有初始化不变 ======
+
+
+
     def state_dict(self, *args, **kwargs):
         return super().state_dict(*args, **kwargs)
 
@@ -715,19 +759,46 @@ class CTCLIP(nn.Module):
         )"""
 
 
-        # 我希望在CTVIT模块后面加一点东西，是直接修改CTVIT？还是新建类，在此之后添加代码？
-        
-
-
-
-
-
-
-
-
         enc_image= self.visual_transformer(image, return_encoded_tokens=True)
         # 这里调用的是 CTViT 的 forward 函数
         # 返回的形状为['b t h w d']
+
+
+        # MoE部分
+        # 调用新的模块对CTVIT的输出进行处理
+
+
+        # self.transformer_encoder, self.moe, self.transformer_decoder, self.task_experts, self.dynamic_routing, self.fusion
+
+        # 1. 展平patch特征
+        b, t, h, w, d = enc_image.shape
+        enc_image_flat = enc_image.view(b, -1, d)  # [b, N, d], N = t*h*w
+
+        # 2. Transformer Encoder
+        f_enc = self.transformer_encoder(enc_image_flat)  # [b, N, d]
+
+        # 3. MoE
+        e_share = self.moe(f_enc)  # [b, N, d]
+
+        # 4. Transformer Decoder
+        dec_tokens = self.transformer_decoder(f_enc)  # [b, token_num, d]
+
+        # 5. Task Specific Experts
+        expert_outputs = self.task_experts(dec_tokens)  # list of [b, token_num, d]
+
+        # 6. Dynamic Routing
+        routing_weights = self.dynamic_routing(dec_tokens)  # [b, token_num, num_experts]
+
+        # 7. Fusion
+        # e_share可以mean-pool到token_num长度，或repeat到token_num
+        e_share_pooled = e_share.mean(dim=1, keepdim=True).expand(-1, dec_tokens.shape[1], -1)  # [b, token_num, d]
+        image_embedding = self.fusion(expert_outputs, routing_weights, e_share_pooled)  # [b, token_num, d]
+
+        # 8. 后续处理（如投影到共享空间等）
+        enc_image = image_embedding  # 替换原有enc_image，后续流程不变
+
+
+
 
 
         #print("This is visual encoding")
