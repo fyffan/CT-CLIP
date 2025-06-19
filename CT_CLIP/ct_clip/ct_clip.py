@@ -15,7 +15,9 @@ from ct_clip.mlm import MLM
 from ct_clip.visual_ssl import SimSiam, SimCLR
 
 from transformers import BertTokenizer, BertModel
-
+from transformer_maskgit.transformer_maskgit.ctvit import (
+    TransformerEncoder, MoE, TransformerDecoder, TaskSpecificExperts, DynamicRouting, Fusion
+)
 # helper functions
 
 def identity(t, *args, **kwargs):
@@ -404,6 +406,48 @@ def model_forward_with_context(
 
 # main clip class
 
+
+
+class CoCoOpPromptLearner(nn.Module):
+    def __init__(self, ctx_dim=768, n_ctx=8, meta_dim=512, device='cuda'):
+        super().__init__()
+        self.n_ctx = n_ctx  # 可学习context tokens的数量
+        self.ctx_dim = ctx_dim  #  context tokens的维度
+        self.device = device  # 设备
+
+        # 可学习context tokens: [n_ctx, ctx_dim]
+        self.ctx = nn.Parameter(torch.randn(n_ctx, ctx_dim))  
+        # 初始化为随机值
+
+        # meta-net: 输入影像embedding，输出meta token
+        self.meta_net = nn.Sequential(
+            nn.Linear(meta_dim, ctx_dim),
+            nn.Tanh()
+        )
+
+    def forward(self, image_features, class_token_embeds):
+        """
+        image_features: [B, meta_dim]
+        class_token_embeds: List[Tensor], 每个元素为 [1, seq_len, ctx_dim]，外部已tokenizer+embedding
+        """
+        B = image_features.shape[0]
+        meta_token = self.meta_net(image_features)  # [B, ctx_dim]
+
+        # 条件化context tokens: [B, n_ctx, ctx_dim]
+        ctx_tokens = self.ctx.unsqueeze(0) + meta_token.unsqueeze(1)  # [B, n_ctx, ctx_dim]
+
+        prompts = []
+        for class_embeds in class_token_embeds:
+            # class_embeds: [1, seq_len, ctx_dim]，如BERT embedding
+            class_embeds = class_embeds.expand(B, -1, -1)  # [B, seq_len, ctx_dim]
+            # 拼接: 条件化context tokens + class token
+            prompt = torch.cat([ctx_tokens, class_embeds], dim=1)  # [B, n_ctx+seq_len, ctx_dim]
+            prompts.append(prompt)
+        # prompts: List，每个类别一个 [B, n_ctx+seq_len, ctx_dim]
+        return prompts
+
+
+
 class CTCLIP(nn.Module):
     def __init__(
             self,
@@ -594,9 +638,7 @@ class CTCLIP(nn.Module):
         self.tokenizer= BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized',do_lower_case=True)
 
         # ====== 新增模块初始化 ======
-        from transformer_maskgit.transformer_maskgit.ctvit import (
-            TransformerEncoder, MoE, TransformerDecoder, TaskSpecificExperts, DynamicRouting, Fusion
-        )
+
 
         self.transformer_encoder = TransformerEncoder(
             dim=transformer_expert_dim,
@@ -796,6 +838,7 @@ class CTCLIP(nn.Module):
 
         # 8. 后续处理（如投影到共享空间等）
         enc_image = image_embedding  # 替换原有enc_image，后续流程不变
+
 
 
 

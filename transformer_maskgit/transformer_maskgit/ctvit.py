@@ -471,7 +471,7 @@ class CTViT(nn.Module):
 
         b, c, f, *image_dims, device = *video.shape, video.device
         device=torch.device('cuda')
-        assert tuple(image_dims) == self.image_sizez=
+        assert tuple(image_dims) == self.image_size
         assert not exists(mask) or mask.shape[-1] == f
 
         first_frame, rest_frames = video[:, :, :1], video[:, :, 1:]
