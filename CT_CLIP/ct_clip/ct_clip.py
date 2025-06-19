@@ -455,7 +455,7 @@ class CTCLIP(nn.Module):
             image_encoder = None,
             text_encoder = None,
             dim_text = 512,
-            dim_image = 512,
+            dim_image = 512, 
             dim_latent = 512,
             num_text_tokens = 28897,
             text_enc_depth = 6,
@@ -490,7 +490,7 @@ class CTCLIP(nn.Module):
             image_ssl_loss_weight = 0.05,
             multiview_loss_weight = 0.1,
             checkpoint_during_training = False,
-            # 新增参数
+            # 新增参数，moe部分
             transformer_expert_dim = 512,
             transformer_num_experts = 4,
             transformer_token_num = 8,
@@ -498,6 +498,9 @@ class CTCLIP(nn.Module):
             transformer_encoder_heads = 8,
             transformer_decoder_depth = 4,
             transformer_decoder_heads = 8,
+            # 新增参数
+            n_ctx = 8,  # CoCoOp Prompt Learner的context tokens数量
+            meta_dim = 512,  # meta token的维度
             **kwargs
     ):
         super().__init__()
@@ -668,6 +671,14 @@ class CTCLIP(nn.Module):
             num_experts=transformer_num_experts
         )
         # ====== 其余原有初始化不变 ======
+        
+        # CoCoOp Prompt Learner
+        self.prompt_learner = CoCoOpPromptLearner(
+            ctx_dim=dim_text,
+            n_ctx=n_ctx,
+            meta_dim=meta_dim,
+            device='cuda'
+        )
 
 
 
@@ -762,16 +773,65 @@ class CTCLIP(nn.Module):
         assert not (not return_loss and is_multiview), 'do not pass in augmented texts or images if not training'
         assert not (self.multiview_loss_weight == 0 and is_multiview), 'multiview loss weight cannot be 0 if augmented text or images passed in'
 
-        # get encoded text
+        # # get encoded text
+
+        # text_args = (text.input_ids,text.attention_mask)
+
+        # if not self.text_encode_without_mask:
+        #     text_args = (*text_args, text_mask)
+
+
+        # text_embeddings = self.text_transformer(text.input_ids, attention_mask = text.attention_mask )
+        # enc_text = text_embeddings[0]
+
+        # # depending on whether text is using causal mask, post process, moving eos token to the first position
+
+        # if self.text_causal_mask:
+        #     eos_text_mask = (text == self.text_eos_id)
+        #     assert torch.all(torch.any(eos_text_mask, dim = -1)), f'some of the text rows does not have the eos id {self.text_eos_id}'
+
+        #     text_len = text.shape[-1]
+        #     eos_indices = eos_text_mask.float().argmax(dim = -1, keepdim = True)
+
+        #     eos_text_mask = torch.zeros_like(eos_text_mask).scatter(1, eos_indices, 1.).bool()
+        #     eos_text_mask = rearrange(eos_text_mask, '... -> ... 1')
+
+        #     eos_tokens = enc_text.masked_select(eos_text_mask)
+        #     rest_tokens = enc_text.masked_select(~eos_text_mask)
+
+        #     eos_tokens = rearrange(eos_tokens, '(b d) -> b 1 d', b = b)
+        #     rest_tokens = rearrange(rest_tokens, '(b n d) -> b n d', b = b, n = text_len - 1)
+        #     enc_text = torch.cat((eos_tokens, rest_tokens), dim = 1)
+
+        # whether to train image encoder, in the case that the image net was pretrained as recommended in LiT
+
+        """enc_image = model_forward_with_context(
+            fn = self.visual_transformer,
+            args = (image,),
+            freeze = freeze_image_encoder
+        )"""
+
+
+        enc_image= self.visual_transformer(image, return_encoded_tokens=True)
+        # 这里调用的是 CTViT 的 forward 函数
+        # 返回的形状为['b t h w d']
+
+               # get encoded text
 
         text_args = (text.input_ids,text.attention_mask)
 
         if not self.text_encode_without_mask:
             text_args = (*text_args, text_mask)
 
+        # 4. 生成prompt
+        new_prompts = self.prompt_learner(enc_image, text.input_ids)  # List，每个元素 [B, n_ctx+seq_len, ctx_dim]
+        # 注意检查传入参数的格式
 
-        text_embeddings = self.text_transformer(text.input_ids, attention_mask = text.attention_mask )
-        enc_text = text_embeddings[0]
+
+        # text_embeddings = self.text_transformer(text.input_ids, attention_mask = text.attention_mask )
+        text_embeddings = self.text_transformer(new_prompts, attention_mask = text.attention_mask )
+
+        nc_text = text_embeddings[0]
 
         # depending on whether text is using causal mask, post process, moving eos token to the first position
 
@@ -792,18 +852,10 @@ class CTCLIP(nn.Module):
             rest_tokens = rearrange(rest_tokens, '(b n d) -> b n d', b = b, n = text_len - 1)
             enc_text = torch.cat((eos_tokens, rest_tokens), dim = 1)
 
-        # whether to train image encoder, in the case that the image net was pretrained as recommended in LiT
-
-        """enc_image = model_forward_with_context(
-            fn = self.visual_transformer,
-            args = (image,),
-            freeze = freeze_image_encoder
-        )"""
 
 
-        enc_image= self.visual_transformer(image, return_encoded_tokens=True)
-        # 这里调用的是 CTViT 的 forward 函数
-        # 返回的形状为['b t h w d']
+
+
 
 
         # MoE部分
