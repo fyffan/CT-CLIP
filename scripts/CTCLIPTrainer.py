@@ -181,6 +181,9 @@ class CTClipTrainer(nn.Module):
             self.tokenizer=BertTokenizer.from_pretrained('microsoft/BiomedVLP-CXR-BERT-specialized',do_lower_case=True)
             # 这行代码的作用是初始化一个医学领域专用的BERT分词器，
             # 用于将原始文本转为模型可处理的token序列：
+            # 能否用于描述肺部小结节位置的中文文本？
+            # 是的，这个分词器可以用于处理描述肺部小结节位置的中文文本，
+            # 但需要注意的是，它是基于英文医学文本训练的，可能对中文文本的处理效果不如专门针对中文训练的分词器。
 
         self.register_buffer('steps', torch.Tensor([0]))
         # 这行代码的作用是注册一个名为'steps'的缓冲区，该缓冲区是一个张量，初始值为0。
@@ -195,6 +198,7 @@ class CTClipTrainer(nn.Module):
 
         self.max_grad_norm = max_grad_norm
         # max_grad_norm是一个超参数，用于梯度裁剪，以防止梯度爆炸。
+
         self.lr=lr
         # Load the pre-trained weights
         self.ds = CTReportDataset(data_folder=data_train, csv_file=reports_file_train)
@@ -243,7 +247,6 @@ class CTClipTrainer(nn.Module):
             self.optim,
         )
         # 这行代码的作用是使用Accelerator类的prepare方法将数据加载器、模型和优化器准备好，
-        # 以便在分布式训练中进行高效的训练和验证。
 
         self.save_model_every = save_model_every
         self.save_results_every = save_results_every
@@ -302,6 +305,9 @@ class CTClipTrainer(nn.Module):
         device=self.device
         video=video.to(device)
         mask = torch.ones((video.shape[0], video.shape[2])).bool().to(device)
+        # 并创建一个与视频数据形状相同的布尔掩码
+        # mask的作用是指示哪些时间步是有效的（即不被遮挡的），即那些slice是肺部部分
+        # 在这里，mask的形状为(batch_size, num_frames)，
         #text = text.to(device)
         text = list(text)
         text_tokens=self.tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512).to(device)
@@ -317,6 +323,7 @@ class CTClipTrainer(nn.Module):
         accum_log(logs, {'loss': loss.item()})
         if exists(self.max_grad_norm):
             self.accelerator.clip_grad_norm_(self.CTClip.parameters(), self.max_grad_norm)
+            # 这行代码的作用是对模型参数的梯度进行裁剪，以防止梯度爆炸。
 
         self.optim.step()
         self.optim.zero_grad()

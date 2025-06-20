@@ -741,7 +741,10 @@ class CTCLIP(nn.Module):
             #print(text.attention_mask.shape)
             #print("------------")
             text_ssl_loss = self.mlm(text.input_ids, attention_mask = text.attention_mask) if self.use_mlm else 0
+            # 因为use_mlm=False(初始化)
+
             image_ssl_loss = self.visual_ssl(image) if self.use_visual_ssl else 0
+            # 也为0
 
         # concat augmented texts and images and do some asserts
 
@@ -772,6 +775,7 @@ class CTCLIP(nn.Module):
         #assert not (return_loss and not self.training), 'loss cannot be used if not training'
         assert not (not return_loss and is_multiview), 'do not pass in augmented texts or images if not training'
         assert not (self.multiview_loss_weight == 0 and is_multiview), 'multiview loss weight cannot be 0 if augmented text or images passed in'
+        # 没有多视角
 
         # # get encoded text
 
@@ -832,10 +836,11 @@ class CTCLIP(nn.Module):
         text_embeddings = self.text_transformer(new_prompts, attention_mask = text.attention_mask )
 
         nc_text = text_embeddings[0]
+        # 
 
         # depending on whether text is using causal mask, post process, moving eos token to the first position
 
-        if self.text_causal_mask:
+        if self.text_causal_mask:  # 貌似为false
             eos_text_mask = (text == self.text_eos_id)
             assert torch.all(torch.any(eos_text_mask, dim = -1)), f'some of the text rows does not have the eos id {self.text_eos_id}'
 
@@ -1062,26 +1067,9 @@ class CTCLIP(nn.Module):
         # loss计算
         # 此处可修改
 
+      
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        
+      
 
         text_to_image_loss = (-log(text_to_image_pos) + log(text_to_image_denom)).mean(dim = -1)
         image_to_text_loss = (-log(image_to_text_pos) + log(image_to_text_denom)).mean(dim = -1)
