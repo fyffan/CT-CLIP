@@ -822,47 +822,6 @@ class CTCLIP(nn.Module):
 
                # get encoded text
 
-        text_args = (text.input_ids,text.attention_mask)
-
-        if not self.text_encode_without_mask:
-            text_args = (*text_args, text_mask)
-
-        # 4. 生成prompt
-        new_prompts = self.prompt_learner(enc_image, text.input_ids)  # List，每个元素 [B, n_ctx+seq_len, ctx_dim]
-        # 注意检查传入参数的格式
-
-
-        # text_embeddings = self.text_transformer(text.input_ids, attention_mask = text.attention_mask )
-        text_embeddings = self.text_transformer(new_prompts, attention_mask = text.attention_mask )
-
-        nc_text = text_embeddings[0]
-        # 
-
-        # depending on whether text is using causal mask, post process, moving eos token to the first position
-
-        if self.text_causal_mask:  # 貌似为false
-            eos_text_mask = (text == self.text_eos_id)
-            assert torch.all(torch.any(eos_text_mask, dim = -1)), f'some of the text rows does not have the eos id {self.text_eos_id}'
-
-            text_len = text.shape[-1]
-            eos_indices = eos_text_mask.float().argmax(dim = -1, keepdim = True)
-
-            eos_text_mask = torch.zeros_like(eos_text_mask).scatter(1, eos_indices, 1.).bool()
-            eos_text_mask = rearrange(eos_text_mask, '... -> ... 1')
-
-            eos_tokens = enc_text.masked_select(eos_text_mask)
-            rest_tokens = enc_text.masked_select(~eos_text_mask)
-
-            eos_tokens = rearrange(eos_tokens, '(b d) -> b 1 d', b = b)
-            rest_tokens = rearrange(rest_tokens, '(b n d) -> b n d', b = b, n = text_len - 1)
-            enc_text = torch.cat((eos_tokens, rest_tokens), dim = 1)
-
-
-
-
-
-
-
         # MoE部分
         # 调用新的模块对CTVIT的输出进行处理
 
@@ -897,8 +856,41 @@ class CTCLIP(nn.Module):
         enc_image = image_embedding  # 替换原有enc_image，后续流程不变
 
 
+        # text transformer部分
+        text_args = (text.input_ids,text.attention_mask)
+
+        if not self.text_encode_without_mask:
+            text_args = (*text_args, text_mask)
+
+        # 4. 生成prompt，分别构建prompt?
+        # 先试用统一构建text，不分正负样本？原论文没有分别构建
+        new_prompts = self.prompt_learner(enc_image, text.input_ids)  # List，每个元素 [B, n_ctx+seq_len, ctx_dim]
+        # 多个标签的序列
 
 
+        # text_embeddings = self.text_transformer(text.input_ids, attention_mask = text.attention_mask )
+        text_embeddings = self.text_transformer(new_prompts, attention_mask = text.attention_mask )
+
+        nc_text = text_embeddings[0]
+
+        # depending on whether text is using causal mask, post process, moving eos token to the first position
+
+        if self.text_causal_mask:  # 貌似为false
+            eos_text_mask = (text == self.text_eos_id)
+            assert torch.all(torch.any(eos_text_mask, dim = -1)), f'some of the text rows does not have the eos id {self.text_eos_id}'
+
+            text_len = text.shape[-1]
+            eos_indices = eos_text_mask.float().argmax(dim = -1, keepdim = True)
+
+            eos_text_mask = torch.zeros_like(eos_text_mask).scatter(1, eos_indices, 1.).bool()
+            eos_text_mask = rearrange(eos_text_mask, '... -> ... 1')
+
+            eos_tokens = enc_text.masked_select(eos_text_mask)
+            rest_tokens = enc_text.masked_select(~eos_text_mask)
+
+            eos_tokens = rearrange(eos_tokens, '(b d) -> b 1 d', b = b)
+            rest_tokens = rearrange(rest_tokens, '(b n d) -> b n d', b = b, n = text_len - 1)
+            enc_text = torch.cat((eos_tokens, rest_tokens), dim = 1)
 
 
         #print("This is visual encoding")
@@ -1069,7 +1061,7 @@ class CTCLIP(nn.Module):
 
       
 
-      
+
 
         text_to_image_loss = (-log(text_to_image_pos) + log(text_to_image_denom)).mean(dim = -1)
         image_to_text_loss = (-log(image_to_text_pos) + log(image_to_text_denom)).mean(dim = -1)

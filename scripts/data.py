@@ -11,6 +11,7 @@ from functools import partial
 import torch.nn.functional as F
 import nibabel as nib
 import tqdm
+from openpyxl import load_workbook
 
 def resize_array(array, current_spacing, target_spacing):
     """
@@ -182,3 +183,81 @@ class CTReportDataset(Dataset):
         input_text = input_text.replace(')', '')
 
         return video_tensor, input_text
+    
+
+
+
+
+
+# 自建数据集
+class VideoDatasetWithLabels(Dataset):
+    def __init__(
+        self,
+        folder,
+        labels_file,
+        image_size,
+        channels = 3,
+        num_frames = 17,
+        horizontal_flip = False,
+        force_num_frames = True,
+        exts = ['gif', 'mp4', 'nii.gz']
+    ):
+        super().__init__(folder, image_size, channels, num_frames, horizontal_flip, force_num_frames, exts)
+        
+        with open(labels_file, 'r') as f:
+            self.labels = json.load(f)
+
+        self.label_file_path = labels_file
+
+    # 设置label读取路径
+    # 
+
+        
+
+    def __getitem__(self, index):
+        tensor = super().__getitem__(index)
+        label = self.labels.get(self.paths[index].name, None)
+        return tensor, label
+
+def main():
+    # data_folder = 'path_to_data_folder'
+    # csv_file = 'path_to_csv_file'
+    # dataset = CTReportDataset(data_folder, csv_file)
+    
+    # for i in range(len(dataset)):
+        # video_tensor, input_text = dataset[i]
+        # print(f"Video Tensor Shape: {video_tensor.shape}, Input Text: {input_text}")
+    # xlsx_file_path = '/data1/users/fangyifan/Works/Paper_Code/CT-CLIP/scripts/肺小结节诊断new.xlsx'
+    # wb = load_workbook(filename=xlsx_file_path)
+    # sheet = wb['人民2018-2020']
+
+    # # 读取单元格内容
+    # cell_value = sheet['A1'].value
+    # print(f"Cell A1 value: {cell_value}")
+
+    # # 读取所有行
+    # row_values = [cell.value for cell in sheet['A']]  # 读取第一行
+    # print(f"Row A values: {row_values}")
+
+    # # 读取所有列
+    # col_values = [cell.value for cell in sheet['1']]  # 读取第一
+    # print(f"Column 1 values: {col_values}")
+
+    # print('ok!')
+
+    file_path = '/data1/users/fangyifan/Works/Paper_Code/CT-CLIP/scripts/肺小结节诊断new.xlsx'
+    # file_path = '肺小结节诊断new.xlsx'
+
+    # 读取xlsx文件
+    data = pd.read_excel(file_path, sheet_name='人民2018-2020')
+
+    # 显示数据
+    print(data)
+
+    print("Data loaded successfully!")
+
+
+
+
+if __name__ == "__main__":
+    main()

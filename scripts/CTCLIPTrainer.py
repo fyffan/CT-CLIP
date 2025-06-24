@@ -317,7 +317,6 @@ class CTClipTrainer(nn.Module):
         with self.accelerator.autocast():
             loss = self.CTClip(text_tokens, video, return_loss=True, device=device)  # forward pass
             # 计算损失值
-            # 为什么不求均值？
 
         self.accelerator.backward(loss)
         accum_log(logs, {'loss': loss.item()})
@@ -332,16 +331,19 @@ class CTClipTrainer(nn.Module):
 
         # save results every so often
         if self.is_main and not (steps % self.save_results_every):
+            # 只有主进程（多卡时）且到达指定步数才会执行评估。
             with torch.no_grad():
 
                 models_to_evaluate = ((self.CTClip, str(steps)),)
 
                 for model, filename in models_to_evaluate:
+                    # 遍历模型，逐个评估
                     model.eval()
                     predictedall=[]
                     realall=[]
 
                     #Fast inference on 100 images
+                    # 快速推理多张图像
                     for i in range(10):
                         print("test")
                         valid_data, text, onehotlabels, name_acc = next(self.valid_dl_iter)
@@ -358,11 +360,12 @@ class CTClipTrainer(nn.Module):
 
                         predictedlabels=[]
                         for pathology in pathologies:
+                            # 这里的pathology是一个字符串，表示病理类型
                             text = [f"There is {pathology}.", f"There is no {pathology}."]
+                            # 构建正负prompt
                             text_tokens=self.tokenizer(
                                             text, return_tensors="pt", padding="max_length", truncation=True, max_length=512).to(device)
                             output = model(text_tokens, valid_data,  device=device)
-
 
                             output = apply_softmax(output)
 
