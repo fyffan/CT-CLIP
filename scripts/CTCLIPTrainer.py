@@ -389,7 +389,7 @@ class CTClipTrainer(nn.Module):
 
                     print('Test F1 Accuracy: ', f1_score(realall, predictedall,average='micro'))
                     print('Test Flat Accuracy: ', accuracy_score(realall.flatten(), predictedall.flatten()),'\n')
-
+ 
                     writer = pd.ExcelWriter(f'{plotdir}aurocs.xlsx', engine='xlsxwriter')
 
                     dfs.to_excel(writer, sheet_name='Sheet1', index=False)
