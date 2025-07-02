@@ -209,7 +209,7 @@ class VideoDatasetWithLabels(Dataset):
         self.data_table = pd.read_excel(self.meta_csv_path, sheet_name='Sheet2')  # 假设csv文件包含影像路径和文本信息
 
         # 按照目前的格式
-        self.data_table = self.data_table[['姓名', '肺结节部位', 'CT上界', 'CT下界', 'PET上界', 'PET下界', '多标签']]
+        self.data_table = self.data_table[['姓名', '肺结节部位', 'CT上界', 'CT下界', 'PET上界', 'PET下界']]
 
     def __len__(self):
         return len(self.data_table)
@@ -253,14 +253,9 @@ class VideoDatasetWithLabels(Dataset):
         file_name = self.data_table.at[index]['姓名']  
         img_path = os.path.join(self.data_path, file_name, 'images')  
         text = self.data_table.at[index]['肺结节部位']
-        is_single = self.data_table.at[index]['多标签']  # 是否多次训练
 
-        if is_single== 1:
-            # 如果是多次训练，按照','划分出多个标签
-            text = text.split(',')
-        else:
-            # 如果是单次训练，直接使用文本信息
-            text = [text]
+        # 如果是单次训练，直接使用文本信息
+        text = [text]
 
         # 读取影像数据
         all_files = os.listdir(img_path)
@@ -294,12 +289,9 @@ class VideoDatasetWithLabels(Dataset):
 
         pet_tensor = self.process_pet_slices(pet_imgs_selected)
 
-
-
-        return text, ct_tensor, pet_tensor, is_single
+        return text, ct_tensor, pet_tensor
     
-    
-
+'''
     # def __init__(
     #         self, 
     #         data_folder, 
@@ -341,6 +333,8 @@ class VideoDatasetWithLabels(Dataset):
     #     tensor = super().__getitem__(index)
     #     label = self.labels.get(self.paths[index].name, None)
     #     return tensor, label
+'''
+
 
 def main():
     # data_folder = 'path_to_data_folder'

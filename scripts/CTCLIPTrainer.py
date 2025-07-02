@@ -14,7 +14,7 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader, random_split
 from torch.utils.data.distributed import DistributedSampler
 
-from data import CTReportDataset
+from data import CTReportDataset, VideoDatasetWithLabels
 from data_inference import CTReportDatasetinfer
 
 import numpy as np
@@ -206,6 +206,23 @@ class CTClipTrainer(nn.Module):
         self.valid_ds = CTReportDatasetinfer(data_folder=data_valid, csv_file=reports_file_valid, labels = labels)
         # CT报告测试数据集
 
+        # 新的数据集
+        self.pair_ds = VideoDatasetWithLabels(
+            data_path=data_train,
+            csv_file_path=labels
+        )
+
+        self.pair_dl = DataLoader(
+            self.pair_ds,
+            num_workers=num_workers,
+            batch_size=self.batch_size,
+            shuffle=True,
+        )
+        # suffle为True，即每次迭代都会打乱数据的顺序，
+        # 这有助于提高模型的泛化能力，防止过拟合
+
+        self.pair_dl_iter = cycle(self.pair_dl)
+
         self.dl = DataLoader(
             self.ds,
             num_workers=num_workers,
@@ -219,6 +236,7 @@ class CTClipTrainer(nn.Module):
             batch_size=1,
             shuffle = False,
         )
+
 
         # prepare with accelerator
         self.dl_iter=cycle(self.dl)
@@ -247,6 +265,17 @@ class CTClipTrainer(nn.Module):
             self.optim,
         )
         # 这行代码的作用是使用Accelerator类的prepare方法将数据加载器、模型和优化器准备好，
+
+        # # 新代码部分
+        # (
+        #     self.pair_dl_iter,
+        #     self.CTClip,
+        #     self.optim,
+        # ) = self.accelerator.prepare(
+        #     self.pair_dl_iter,
+        #     self.CTClip,
+        #     self.optim,
+        # )
 
         self.save_model_every = save_model_every
         self.save_results_every = save_results_every
